@@ -397,7 +397,7 @@ const char *ast_str_retrieve_variable(struct ast_str **str, ssize_t maxlen, stru
 	return ret;
 }
 
-int ast_str_substitute_variables_full2(struct ast_str **buf, ssize_t maxlen,
+void ast_str_substitute_variables_full2(struct ast_str **buf, ssize_t maxlen,
 	struct ast_channel *c, struct varshead *headp, const char *templ,
 	size_t *used, int use_both)
 {
@@ -406,7 +406,6 @@ int ast_str_substitute_variables_full2(struct ast_str **buf, ssize_t maxlen,
 	struct ast_str *substr1 = ast_str_create(16);
 	struct ast_str *substr2 = NULL;
 	struct ast_str *substr3 = ast_str_create(16);
-    int error = 0;
 
 	ast_str_reset(*buf);
 
@@ -416,7 +415,7 @@ int ast_str_substitute_variables_full2(struct ast_str **buf, ssize_t maxlen,
 		}
 		ast_free(substr1);
 		ast_free(substr3);
-		return -1;
+		return;
 	}
 
 	whereweare = templ;
@@ -518,7 +517,7 @@ int ast_str_substitute_variables_full2(struct ast_str **buf, ssize_t maxlen,
 						continue;
 					}
 				}
-				error |= ast_str_substitute_variables_full2(&substr2, 0, c, headp,
+				ast_str_substitute_variables_full2(&substr2, 0, c, headp,
 					ast_str_buffer(substr1), NULL, use_both);
 				finalvars = ast_str_buffer(substr2);
 			} else {
@@ -571,9 +570,7 @@ int ast_str_substitute_variables_full2(struct ast_str **buf, ssize_t maxlen,
 				}
 				res = (result ? 0 : -1);
 			}
-			if (res) {
-                error |= res;
-            } else {
+			if (!res) {
 				ast_str_substring(substr3, offset, offset2);
 				ast_str_append(buf, maxlen, "%s", ast_str_buffer(substr3));
 			}
@@ -623,7 +620,7 @@ int ast_str_substitute_variables_full2(struct ast_str **buf, ssize_t maxlen,
 						continue;
 					}
 				}
-				error |= ast_str_substitute_variables_full2(&substr2, 0, c, headp,
+				ast_str_substitute_variables_full2(&substr2, 0, c, headp,
 					ast_str_buffer(substr1), NULL, use_both);
 				finalvars = ast_str_buffer(substr2);
 			} else {
@@ -642,39 +639,36 @@ int ast_str_substitute_variables_full2(struct ast_str **buf, ssize_t maxlen,
 	ast_free(substr1);
 	ast_free(substr2);
 	ast_free(substr3);
-
-    return error;
 }
 
-int ast_str_substitute_variables_full(struct ast_str **buf, ssize_t maxlen,
+void ast_str_substitute_variables_full(struct ast_str **buf, ssize_t maxlen,
 	struct ast_channel *chan, struct varshead *headp, const char *templ, size_t *used)
 {
-	return ast_str_substitute_variables_full2(buf, maxlen, chan, headp, templ, used, 0);
+	ast_str_substitute_variables_full2(buf, maxlen, chan, headp, templ, used, 0);
 }
 
-int ast_str_substitute_variables(struct ast_str **buf, ssize_t maxlen, struct ast_channel *chan, const char *templ)
+void ast_str_substitute_variables(struct ast_str **buf, ssize_t maxlen, struct ast_channel *chan, const char *templ)
 {
-	return ast_str_substitute_variables_full(buf, maxlen, chan, NULL, templ, NULL);
+	ast_str_substitute_variables_full(buf, maxlen, chan, NULL, templ, NULL);
 }
 
-int ast_str_substitute_variables_varshead(struct ast_str **buf, ssize_t maxlen, struct varshead *headp, const char *templ)
+void ast_str_substitute_variables_varshead(struct ast_str **buf, ssize_t maxlen, struct varshead *headp, const char *templ)
 {
-	return ast_str_substitute_variables_full(buf, maxlen, NULL, headp, templ, NULL);
+	ast_str_substitute_variables_full(buf, maxlen, NULL, headp, templ, NULL);
 }
 
-int pbx_substitute_variables_helper_full(struct ast_channel *c, struct varshead *headp, const char *cp1, char *cp2, int count, size_t *used)
+void pbx_substitute_variables_helper_full(struct ast_channel *c, struct varshead *headp, const char *cp1, char *cp2, int count, size_t *used)
 {
-	return pbx_substitute_variables_helper_full_location(c, headp, cp1, cp2, count, used, NULL, NULL, 0);
+	pbx_substitute_variables_helper_full_location(c, headp, cp1, cp2, count, used, NULL, NULL, 0);
 }
 
-int pbx_substitute_variables_helper_full_location(struct ast_channel *c, struct varshead *headp, const char *cp1, char *cp2, int count, size_t *used, const char *context, const char *exten, int pri)
+void pbx_substitute_variables_helper_full_location(struct ast_channel *c, struct varshead *headp, const char *cp1, char *cp2, int count, size_t *used, const char *context, const char *exten, int pri)
 {
 	/* Substitutes variables into cp2, based on string cp1, cp2 NO LONGER NEEDS TO BE ZEROED OUT!!!!  */
 	const char *whereweare;
 	const char *orig_cp2 = cp2;
 	char ltmp[VAR_BUF_SIZE];
 	char var[VAR_BUF_SIZE];
-    int error = 0;
 
 	*cp2 = 0; /* just in case nothing ends up there */
 	whereweare = cp1;
@@ -773,7 +767,7 @@ int pbx_substitute_variables_helper_full_location(struct ast_channel *c, struct 
 
 			/* Substitute if necessary */
 			if (needsub) {
-				error |= pbx_substitute_variables_helper_full_location(c, headp, var, ltmp, VAR_BUF_SIZE - 1, NULL, context, exten, pri);
+				pbx_substitute_variables_helper_full_location(c, headp, var, ltmp, VAR_BUF_SIZE - 1, NULL, context, exten, pri);
 				vars = ltmp;
 			} else {
 				vars = var;
@@ -782,23 +776,17 @@ int pbx_substitute_variables_helper_full_location(struct ast_channel *c, struct 
 			parse_variable_name(vars, &offset, &offset2, &isfunction);
 			if (isfunction) {
 				/* Evaluate function */
-				if (c || !headp) {
-                    int funcerr;
-
-                    error |= (funcerr = ast_func_read(c, vars, workspace, VAR_BUF_SIZE));
-
-                    cp4 = funcerr ? NULL : workspace;
-                } else {
+				if (c || !headp)
+					cp4 = ast_func_read(c, vars, workspace, VAR_BUF_SIZE) ? NULL : workspace;
+				else {
 					struct varshead old;
 					struct ast_channel *bogus;
 
 					bogus = ast_dummy_channel_alloc();
 					if (bogus) {
-                        int funcerr;
 						old = *ast_channel_varshead(bogus);
 						*ast_channel_varshead(bogus) = *headp;
-                        error |= (funcerr = ast_func_read(bogus, vars, workspace, VAR_BUF_SIZE));
-						cp4 = funcerr ? NULL : workspace;
+						cp4 = ast_func_read(bogus, vars, workspace, VAR_BUF_SIZE) ? NULL : workspace;
 						/* Don't deallocate the varshead that was passed in */
 						*ast_channel_varshead(bogus) = old;
 						ast_channel_unref(bogus);
@@ -875,7 +863,7 @@ int pbx_substitute_variables_helper_full_location(struct ast_channel *c, struct 
 
 			/* Substitute if necessary */
 			if (needsub) {
-				error |= pbx_substitute_variables_helper_full_location(c, headp, var, ltmp, VAR_BUF_SIZE - 1, NULL, context, exten, pri);
+				pbx_substitute_variables_helper_full_location(c, headp, var, ltmp, VAR_BUF_SIZE - 1, NULL, context, exten, pri);
 				vars = ltmp;
 			} else {
 				vars = var;
@@ -893,18 +881,16 @@ int pbx_substitute_variables_helper_full_location(struct ast_channel *c, struct 
 	if (used) {
 		*used = cp2 - orig_cp2;
 	}
-
-    return error;
 }
 
-int pbx_substitute_variables_helper(struct ast_channel *c, const char *cp1, char *cp2, int count)
+void pbx_substitute_variables_helper(struct ast_channel *c, const char *cp1, char *cp2, int count)
 {
-	return pbx_substitute_variables_helper_full(c, (c) ? ast_channel_varshead(c) : NULL, cp1, cp2, count, NULL);
+	pbx_substitute_variables_helper_full(c, (c) ? ast_channel_varshead(c) : NULL, cp1, cp2, count, NULL);
 }
 
-int pbx_substitute_variables_varshead(struct varshead *headp, const char *cp1, char *cp2, int count)
+void pbx_substitute_variables_varshead(struct varshead *headp, const char *cp1, char *cp2, int count)
 {
-    return pbx_substitute_variables_helper_full(NULL, headp, cp1, cp2, count, NULL);
+	pbx_substitute_variables_helper_full(NULL, headp, cp1, cp2, count, NULL);
 }
 
 /*! \brief CLI support for listing global variables in a parseable way */

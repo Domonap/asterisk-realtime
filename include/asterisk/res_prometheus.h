@@ -32,7 +32,6 @@
 #include "asterisk/lock.h"
 #include "asterisk/linkedlists.h"
 #include "asterisk/stringfields.h"
-#include "asterisk/optional_api.h"
 
 /*!
  * \brief How many labels a single metric can have
@@ -232,14 +231,6 @@ struct prometheus_metric {
 	 * callback function. Otherwise, leave it \c NULL.
 	 */
 	void (* get_metric_value)(struct prometheus_metric *metric);
-    /*!
-     * \brief Callback function called before metric being destroyed by res_prometheus module
-     *
-     * \retval 0 metric can be fully destroyed by res_prometheus module
-     * \retval -1 metric well be destroyed by producer module
-     *
-     */
-    int (* on_destroy)(struct prometheus_metric *metric);
 	/*!
 	 * \brief A list of children metrics
 	 *
@@ -295,7 +286,6 @@ struct prometheus_metric {
 	.help = (h), \
 	.children = AST_LIST_HEAD_NOLOCK_INIT_VALUE, \
 	.get_metric_value = (cb), \
-    .on_destroy = NULL, \
 }
 
 /*!
@@ -333,11 +323,8 @@ struct prometheus_metric {
  * \c children list first.
  *
  * \param metric The metric to destroy
- * \retval 0 if no errors, else some error occurred
  */
-AST_OPTIONAL_API(int, prometheus_metric_free,
-                 (struct prometheus_metric *metric),
-                { return AST_OPTIONAL_API_UNAVAILABLE; });
+void prometheus_metric_free(struct prometheus_metric *metric);
 
 /*!
  * \brief Create a malloc'd counter metric
@@ -433,9 +420,7 @@ struct prometheus_callback {
  * \retval 0 success
  * \retval -1 error
  */
-AST_OPTIONAL_API(int, prometheus_metric_register,
-                 (struct prometheus_metric *metric),
-                { return AST_OPTIONAL_API_UNAVAILABLE; });
+int prometheus_metric_register(struct prometheus_metric *metric);
 
 /*!
  * \brief Remove a registered metric
@@ -447,9 +432,7 @@ AST_OPTIONAL_API(int, prometheus_metric_register,
  * \retval 0 The metric was found, unregistered, and disposed of
  * \retval -1 The metric was not found
  */
-AST_OPTIONAL_API(int, prometheus_metric_unregister,
-                 (struct prometheus_metric *metric),
-                { return AST_OPTIONAL_API_UNAVAILABLE; });
+int prometheus_metric_unregister(struct prometheus_metric *metric);
 
 /*!
  * The current number of registered metrics

@@ -129,17 +129,12 @@
 #include "asterisk/config_options.h"
 #include "asterisk/ast_version.h"
 #include "asterisk/buildinfo.h"
-
-#define AST_API_MODULE
 #include "asterisk/res_prometheus.h"
 
 #include "prometheus/prometheus_internal.h"
 
 /*! \brief Lock that protects data structures during an HTTP scrape */
 AST_MUTEX_DEFINE_STATIC(scrape_lock);
-
-/*! \brief Indicate module ready to accept optional API calls who can change global state */
-static int module_ready = 0;
 
 AST_VECTOR(, struct prometheus_metric *) metrics;
 
@@ -290,7 +285,7 @@ int prometheus_metric_registered_count(void)
 	return AST_VECTOR_SIZE(&metrics);
 }
 
-int AST_OPTIONAL_API_NAME(prometheus_metric_register)(struct prometheus_metric *metric)
+int prometheus_metric_register(struct prometheus_metric *metric)
 {
 	SCOPED_MUTEX(lock, &scrape_lock);
 	int i;
@@ -298,11 +293,6 @@ int AST_OPTIONAL_API_NAME(prometheus_metric_register)(struct prometheus_metric *
 	if (!metric) {
 		return -1;
 	}
-
-    if (!module_ready) {
-        /* API still unavailable */
-        return AST_OPTIONAL_API_UNAVAILABLE;
-    }
 
 	for (i = 0; i < AST_VECTOR_SIZE(&metrics); i++) {
 		struct prometheus_metric *existing = AST_VECTOR_GET(&metrics, i);
@@ -342,13 +332,13 @@ int AST_OPTIONAL_API_NAME(prometheus_metric_register)(struct prometheus_metric *
 	return 0;
 }
 
-int AST_OPTIONAL_API_NAME(prometheus_metric_unregister)(struct prometheus_metric *metric)
+int prometheus_metric_unregister(struct prometheus_metric *metric)
 {
 	if (!metric) {
 		return -1;
 	}
 
-	if (module_ready) {
+	{
 		SCOPED_MUTEX(lock, &scrape_lock);
 		int i;
 
@@ -395,43 +385,29 @@ int AST_OPTIONAL_API_NAME(prometheus_metric_unregister)(struct prometheus_metric
 				AST_LIST_TRAVERSE_SAFE_END;
 			}
 		}
-	} else {
-        return AST_OPTIONAL_API_UNAVAILABLE;
-    }
+	}
 
 	return -1;
 }
 
-int AST_OPTIONAL_API_NAME(prometheus_metric_free)(struct prometheus_metric *metric)
+void prometheus_metric_free(struct prometheus_metric *metric)
 {
 	struct prometheus_metric *child;
-    int preserve;
 
 	if (!metric) {
-		return 0;
+		return;
 	}
 
 	while ((child = AST_LIST_REMOVE_HEAD(&metric->children, entry))) {
 		prometheus_metric_free(child);
 	}
-
-    ast_mutex_lock(&metric->lock);
-    preserve = metric->on_destroy ? metric->on_destroy(metric) : 0;
-    ast_mutex_unlock(&metric->lock);
-
-    if (preserve) {
-        return preserve;
-    }
-
 	ast_mutex_destroy(&metric->lock);
 
 	if (metric->allocation_strategy == PROMETHEUS_METRIC_ALLOCD) {
-		return 0;
+		return;
 	} else if (metric->allocation_strategy == PROMETHEUS_METRIC_MALLOCD) {
 		ast_free(metric);
 	}
-
-    return 0;
 }
 
 /*!
@@ -532,11 +508,6 @@ static void prometheus_metric_full_to_string(struct prometheus_metric *metric,
 		ast_str_append(output, 0, "%s", "}");
 	}
 
-    /* If specified value fetcher call it before use metric value */
-    if (metric->get_metric_value) {
-        metric->get_metric_value(metric);
-    }
-
 	/*
 	 * If no value exists, put in a 0. That ensures we don't anger Prometheus.
 	 */
@@ -611,6 +582,9 @@ static void scrape_metrics(struct ast_str **response)
 		}
 
 		ast_mutex_lock(&metric->lock);
+		if (metric->get_metric_value) {
+			metric->get_metric_value(metric);
+		}
 		prometheus_metric_to_string(metric, response);
 		ast_mutex_unlock(&metric->lock);
 	}
@@ -930,9 +904,6 @@ static int unload_module(void)
 	aco_info_destroy(&cfg_info);
 	ao2_global_obj_release(global_config);
 
-    /* After this point we reject optional api calls, who can change global module state */
-    module_ready = 0;
-
 	return 0;
 }
 
@@ -996,10 +967,6 @@ static int load_module(void)
 	aco_option_register(&cfg_info, "auth_username", ACO_EXACT, global_options, "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct prometheus_general_config, auth_username));
 	aco_option_register(&cfg_info, "auth_password", ACO_EXACT, global_options, "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct prometheus_general_config, auth_password));
 	aco_option_register(&cfg_info, "auth_realm", ACO_EXACT, global_options, "Asterisk Prometheus Metrics", OPT_STRINGFIELD_T, 0, STRFLDSET(struct prometheus_general_config, auth_realm));
-
-    /* At this time safe to accept optional api calls */
-    module_ready = 1;
-
 	if (aco_process_config(&cfg_info, 0) == ACO_PROCESS_ERROR) {
 		goto cleanup;
 	}

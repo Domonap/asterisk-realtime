@@ -753,9 +753,6 @@ static int acf_curl_helper(struct ast_channel *chan, struct curl_args *args)
 
 	if (curl_easy_perform(*curl) != 0) {
 		ast_log(LOG_WARNING, "%s ('%s')\n", curl_errbuf, args->url);
-
-        /* Any connection trouble cause request is not successful */
-        ret = -1;
 	}
 
 	/* Reset buffer to NULL so curl doesn't try to write to it when the

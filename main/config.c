@@ -3344,7 +3344,7 @@ static int realtime_arguments_to_fields2(va_list ap, int skip, struct ast_variab
 	return 0;
 }
 
-struct ast_variable *ast_load_realtime_all_fields2(const char *family, const struct ast_variable *fields, int * const errflag)
+struct ast_variable *ast_load_realtime_all_fields(const char *family, const struct ast_variable *fields)
 {
 	struct ast_config_engine *eng;
 	char db[256];
@@ -3352,33 +3352,17 @@ struct ast_variable *ast_load_realtime_all_fields2(const char *family, const str
 	struct ast_variable *res=NULL;
 	int i;
 
-    if (errflag) {
-        *errflag = 0;
-    }
-
 	for (i = 1; ; i++) {
 		if ((eng = find_engine(family, i, db, sizeof(db), table, sizeof(table)))) {
-            if (eng->realtime_func2) {
-                if ((res = eng->realtime_func2(db, table, fields, errflag))) {
-                    return res;
-                }
-            } else if (eng->realtime_func) {
-                if ((res = eng->realtime_func(db, table, fields))) {
-                    return res;
-                }
-
-            }
+			if (eng->realtime_func && (res = eng->realtime_func(db, table, fields))) {
+				return res;
+			}
 		} else {
 			return NULL;
 		}
 	}
 
 	return res;
-}
-
-struct ast_variable *ast_load_realtime_all_fields(const char *family, const struct ast_variable *fields)
-{
-    return ast_load_realtime_all_fields2(family, fields, NULL);
 }
 
 struct ast_variable *ast_load_realtime_all(const char *family, ...)
@@ -3398,13 +3382,13 @@ struct ast_variable *ast_load_realtime_all(const char *family, ...)
 	return res;
 }
 
-struct ast_variable *ast_load_realtime_fields2(const char *family, const struct ast_variable *fields, int * const errflag)
+struct ast_variable *ast_load_realtime_fields(const char *family, const struct ast_variable *fields)
 {
 	struct ast_variable *res;
 	struct ast_variable *cur;
 	struct ast_variable **prev;
 
-	res = ast_load_realtime_all_fields2(family, fields, errflag);
+	res = ast_load_realtime_all_fields(family, fields);
 
 	/* Filter the list. */
 	prev = &res;
@@ -3431,11 +3415,6 @@ struct ast_variable *ast_load_realtime_fields2(const char *family, const struct 
 		}
 	}
 	return res;
-}
-
-struct ast_variable *ast_load_realtime_fields(const char *family, const struct ast_variable *fields)
-{
-    return ast_load_realtime_fields2(family, fields, NULL);
 }
 
 struct ast_variable *ast_load_realtime(const char *family, ...)
@@ -3528,7 +3507,7 @@ int ast_unload_realtime(const char *family)
 	return res;
 }
 
-struct ast_config *ast_load_realtime_multientry_fields2(const char *family, const struct ast_variable *fields, int * const errflag)
+struct ast_config *ast_load_realtime_multientry_fields(const char *family, const struct ast_variable *fields)
 {
 	struct ast_config_engine *eng;
 	char db[256];
@@ -3536,23 +3515,8 @@ struct ast_config *ast_load_realtime_multientry_fields2(const char *family, cons
 	struct ast_config *res = NULL;
 	int i;
 
-    if (errflag) {
-        *errflag = 0;
-    }
-
 	for (i = 1; ; i++) {
 		if ((eng = find_engine(family, i, db, sizeof(db), table, sizeof(table)))) {
-            if (eng->realtime_multi_func2) {
-                if ((res = eng->realtime_multi_func2(db, table, fields, errflag))) {
-                    break;
-                }
-            } else if (eng->realtime_multi_func) {
-                if ((res = eng->realtime_multi_func(db, table, fields))) {
-                    break;
-                }
-
-            }
-
 			if (eng->realtime_multi_func && (res = eng->realtime_multi_func(db, table, fields))) {
 				/* If we were returned an empty cfg, destroy it and return NULL */
 				if (!res->root) {
@@ -3566,19 +3530,8 @@ struct ast_config *ast_load_realtime_multientry_fields2(const char *family, cons
 		}
 	}
 
-    if (res && !res->root) {
-        ast_config_destroy(res);
-        res = NULL;
-    }
-
 	return res;
 }
-
-struct ast_config *ast_load_realtime_multientry_fields(const char *family, const struct ast_variable *fields)
-{
-    return ast_load_realtime_multientry_fields2(family, fields, NULL);
-}
-
 
 struct ast_config *ast_load_realtime_multientry(const char *family, ...)
 {

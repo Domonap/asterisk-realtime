@@ -58,7 +58,7 @@ AST_THREADSTORAGE(result_buf);
  * \retval var on success
  * \retval NULL on failure
 */
-static struct ast_variable *realtime_curl2(const char *url, const char *unused, const struct ast_variable *fields, int * const errflag)
+static struct ast_variable *realtime_curl(const char *url, const char *unused, const struct ast_variable *fields)
 {
 	struct ast_str *query, *buffer;
 	char buf1[256], buf2[256];
@@ -67,34 +67,17 @@ static struct ast_variable *realtime_curl2(const char *url, const char *unused, 
 	unsigned int start = 1;
 	struct ast_variable *var = NULL, *prev = NULL;
 
-    if (errflag) {
-        *errflag = 0;
-    }
-
 	if (!ast_custom_function_find("CURL")) {
 		ast_log(LOG_ERROR, "func_curl.so must be loaded in order to use res_config_curl.so!!\n");
-
-        if (errflag) {
-            *errflag = -1;
-        }
-
 		return NULL;
 	}
 
 	if (!(query = ast_str_thread_get(&query_buf, 16))) {
-        if (errflag) {
-            *errflag = -1;
-        }
-
-        return NULL;
+		return NULL;
 	}
 
 	if (!(buffer = ast_str_thread_get(&result_buf, 16))) {
-        if (errflag) {
-            *errflag = -1;
-        }
-
-        return NULL;
+		return NULL;
 	}
 
 	ast_str_set(&query, 0, "${CURL(%s/single,", url);
@@ -107,11 +90,7 @@ static struct ast_variable *realtime_curl2(const char *url, const char *unused, 
 	}
 
 	ast_str_append(&query, 0, ")}");
-	if (ast_str_substitute_variables(&buffer, 0, NULL, ast_str_buffer(query))) {
-        if (errflag) {
-            *errflag = -1;
-        }
-    }
+	ast_str_substitute_variables(&buffer, 0, NULL, ast_str_buffer(query));
 
 	/* Remove any trailing newline characters */
 	if ((stringp = strchr(ast_str_buffer(buffer), '\r')) || (stringp = strchr(ast_str_buffer(buffer), '\n'))) {
@@ -139,11 +118,6 @@ static struct ast_variable *realtime_curl2(const char *url, const char *unused, 
 	}
 
 	return var;
-}
-
-static struct ast_variable *realtime_curl(const char *url, const char *unused, const struct ast_variable *fields)
-{
-    return realtime_curl2(url, unused, fields, NULL);
 }
 
 /*!
@@ -618,7 +592,6 @@ static struct ast_config *config_curl(const char *url, const char *unused, const
 static struct ast_config_engine curl_engine = {
 	.name = "curl",
 	.load_func = config_curl,
-    .realtime_func2 = realtime_curl2,
 	.realtime_func = realtime_curl,
 	.realtime_multi_func = realtime_multi_curl,
 	.store_func = store_curl,
