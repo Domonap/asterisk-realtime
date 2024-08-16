@@ -108,7 +108,9 @@ struct ast_variable {
 
 typedef struct ast_config *config_load_func(const char *database, const char *table, const char *configfile, struct ast_config *config, struct ast_flags flags, const char *suggested_include_file, const char *who_asked);
 typedef struct ast_variable *realtime_var_get(const char *database, const char *table, const struct ast_variable *fields);
+typedef struct ast_variable *realtime_var_get2(const char *database, const char *table, const struct ast_variable *fields, int * const errflag);
 typedef struct ast_config *realtime_multi_get(const char *database, const char *table, const struct ast_variable *fields);
+typedef struct ast_config *realtime_multi_get2(const char *database, const char *table, const struct ast_variable *fields, int * const errflag);
 typedef int realtime_update(const char *database, const char *table, const char *keyfield, const char *entity, const struct ast_variable *fields);
 typedef int realtime_update2(const char *database, const char *table, const struct ast_variable *lookup_fields, const struct ast_variable *update_fields);
 typedef int realtime_store(const char *database, const char *table, const struct ast_variable *fields);
@@ -131,7 +133,9 @@ struct ast_config_engine {
 	char *name;
 	config_load_func *load_func;
 	realtime_var_get *realtime_func;
+    realtime_var_get2 *realtime_func2;
 	realtime_multi_get *realtime_multi_func;
+    realtime_multi_get2 *realtime_multi_func2;
 	realtime_update *update_func;
 	realtime_update2 *update2_func;
 	realtime_store *store_func;
@@ -441,6 +445,7 @@ int ast_category_exist(const struct ast_config *config, const char *category_nam
  *
  * \param family which family/config to lookup
  * \param fields which fields to lookup
+ * \param errflag place for backend error status if any
  *
  * \details
  * This will use builtin configuration backends to look up a particular
@@ -458,8 +463,10 @@ int ast_category_exist(const struct ast_config *config, const char *category_nam
  * You should use the constant SENTINEL to terminate arguments, in
  * order to preserve cross-platform compatibility.
  */
+struct ast_variable *ast_load_realtime_fields2(const char *family, const struct ast_variable *fields, int * const errflag);
 struct ast_variable *ast_load_realtime_fields(const char *family, const struct ast_variable *fields);
 struct ast_variable *ast_load_realtime(const char *family, ...) attribute_sentinel;
+struct ast_variable *ast_load_realtime_all_fields2(const char *family, const struct ast_variable *fields, int * const errflag);
 struct ast_variable *ast_load_realtime_all_fields(const char *family, const struct ast_variable *fields);
 struct ast_variable *ast_load_realtime_all(const char *family, ...) attribute_sentinel;
 
@@ -524,6 +531,25 @@ int ast_unload_realtime(const char *family);
  * of what sort of data is going to be written.
  */
 int ast_realtime_require_field(const char *family, ...) attribute_sentinel;
+
+/*!
+ * \brief Retrieve realtime configuration
+ *
+ * \param family which family/config to lookup
+ * \param fields list of fields
+ * \param errflag optional place for error code from realtime backend
+ *
+ * \details
+ * This will use builtin configuration backends to look up a particular
+ * entity in realtime and return a variable list of its parameters. Unlike
+ * the ast_load_realtime, this function can return more than one entry and
+ * is thus stored inside a traditional ast_config structure rather than
+ * just returning a linked list of variables.
+ *
+ * \return An ast_config with one or more results
+ * \retval NULL Error or no results returned
+ */
+struct ast_config *ast_load_realtime_multientry_fields2(const char *family, const struct ast_variable *fields, int * const errflag);
 
 /*!
  * \brief Retrieve realtime configuration

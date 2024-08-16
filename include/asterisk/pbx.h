@@ -1425,14 +1425,14 @@ int pbx_builtin_raise_exception(struct ast_channel *chan, const char *data);
 
 /*! @name Substitution routines, using static string buffers
  * @{ */
-void pbx_substitute_variables_helper(struct ast_channel *c, const char *cp1, char *cp2, int count);
-void pbx_substitute_variables_varshead(struct varshead *headp, const char *cp1, char *cp2, int count);
-void pbx_substitute_variables_helper_full(struct ast_channel *c, struct varshead *headp, const char *cp1, char *cp2, int cp2_size, size_t *used);
+int pbx_substitute_variables_helper(struct ast_channel *c, const char *cp1, char *cp2, int count);
+int pbx_substitute_variables_varshead(struct varshead *headp, const char *cp1, char *cp2, int count);
+int pbx_substitute_variables_helper_full(struct ast_channel *c, struct varshead *headp, const char *cp1, char *cp2, int cp2_size, size_t *used);
 
 /*!
  * \brief Substitutes variables, similar to pbx_substitute_variables_helper_full, but allows passing the context, extension, and priority in.
  */
-void pbx_substitute_variables_helper_full_location(struct ast_channel *c, struct varshead *headp, const char *cp1, char *cp2, int cp2_size, size_t *used, const char *context, const char *exten, int pri);
+int pbx_substitute_variables_helper_full_location(struct ast_channel *c, struct varshead *headp, const char *cp1, char *cp2, int cp2_size, size_t *used, const char *context, const char *exten, int pri);
 /*! @} */
 
 /*! @name Substitution routines, using dynamic string buffers
@@ -1453,7 +1453,7 @@ const char *ast_str_retrieve_variable(struct ast_str **buf, ssize_t maxlen, stru
  * \param chan Channel variables from which to extract values, and channel to pass to any dialplan functions.
  * \param templ Variable template to expand.
  */
-void ast_str_substitute_variables(struct ast_str **buf, ssize_t maxlen, struct ast_channel *chan, const char *templ);
+int ast_str_substitute_variables(struct ast_str **buf, ssize_t maxlen, struct ast_channel *chan, const char *templ);
 
 /*!
  * \param buf Result will be placed in this buffer.
@@ -1461,7 +1461,7 @@ void ast_str_substitute_variables(struct ast_str **buf, ssize_t maxlen, struct a
  * \param headp If no channel is specified, a channel list from which to extract variable values
  * \param templ Variable template to expand.
  */
-void ast_str_substitute_variables_varshead(struct ast_str **buf, ssize_t maxlen, struct varshead *headp, const char *templ);
+int ast_str_substitute_variables_varshead(struct ast_str **buf, ssize_t maxlen, struct varshead *headp, const char *templ);
 
 /*!
  * \param buf Result will be placed in this buffer.
@@ -1470,8 +1470,9 @@ void ast_str_substitute_variables_varshead(struct ast_str **buf, ssize_t maxlen,
  * \param headp If no channel is specified, a channel list from which to extract variable values
  * \param templ Variable template to expand.
  * \param used Number of bytes read from the template.  (May be NULL)
+ * \retval 0 if no errors, else some error occurred
  */
-void ast_str_substitute_variables_full(struct ast_str **buf, ssize_t maxlen, struct ast_channel *c, struct varshead *headp, const char *templ, size_t *used);
+int ast_str_substitute_variables_full(struct ast_str **buf, ssize_t maxlen, struct ast_channel *c, struct varshead *headp, const char *templ, size_t *used);
 
 /*!
  * \brief Perform variable/function/expression substitution on an ast_str
@@ -1489,8 +1490,9 @@ void ast_str_substitute_variables_full(struct ast_str **buf, ssize_t maxlen, str
  *                 If this parameter is set to 1 and both a channel and headp
  *                 are specified, the channel will be searched for variables
  *                 first and any not found will be searched for in headp.
+ * \retval 0 if no errors, else some error occurred
  */
-void ast_str_substitute_variables_full2(struct ast_str **buf, ssize_t maxlen,
+int ast_str_substitute_variables_full2(struct ast_str **buf, ssize_t maxlen,
 	struct ast_channel *c, struct varshead *headp, const char *templ,
 	size_t *used, int use_both);
 
