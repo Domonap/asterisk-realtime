@@ -34,9 +34,33 @@
 
 #include "asterisk/module.h"
 #include "asterisk/sorcery.h"
+#include "asterisk/utils.h"
+#include "asterisk/lock.h"
+#include "asterisk/res_prometheus.h"
 
 /*! \brief They key field used to store the unique identifier for the object */
 #define UUID_FIELD "id"
+
+#define METRIC_REQUEST_TOTAL_INDEX  (0)
+#define METRIC_REQUEST_TOTAL_FLAG   (1 << METRIC_REQUEST_TOTAL_INDEX)
+#define METRIC_REQUEST_TOTAL_NAME   "asterisk_realtime_request_total"
+#define METRIC_REQUEST_TOTAL_HELP   "Total requests on sorcery realtime subsystem"
+
+#define METRIC_REQUEST_ERROR_INDEX  (METRIC_REQUEST_TOTAL_INDEX + 1)
+#define METRIC_REQUEST_ERROR_FLAG   (1 << METRIC_REQUEST_ERROR_INDEX)
+#define METRIC_REQUEST_ERROR_NAME   "asterisk_realtime_request_error"
+#define METRIC_REQUEST_ERROR_HELP   "Total error requests on sorcery realtime subsystem"
+
+#define METRIC_REQUEST_MISS_INDEX   (METRIC_REQUEST_ERROR_INDEX + 1)
+#define METRIC_REQUEST_MISS_FLAG    (1 << METRIC_REQUEST_MISS_INDEX)
+#define METRIC_REQUEST_MISS_NAME    "asterisk_realtime_request_miss"
+#define METRIC_REQUEST_MISS_HELP    "Total miss requests on sorcery realtime subsystem"
+
+#define METRICS_COUNT               (METRIC_REQUEST_MISS_INDEX + 1)
+
+#define container_of(ptr, type, member) ({                      \
+        const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
+        (type *)( (char *)__mptr - offsetof(type,member) );})
 
 enum unqualified_fetch {
 	UNQUALIFIED_FETCH_NO,
@@ -47,30 +71,52 @@ enum unqualified_fetch {
 
 struct sorcery_config {
 	enum unqualified_fetch fetch;
+    struct prometheus_metric metrics[METRICS_COUNT];
+    uint64_t metric_values[METRICS_COUNT];
 	char family[];
 };
 
 static void *sorcery_realtime_open(const char *data);
 static int sorcery_realtime_create(const struct ast_sorcery *sorcery, void *data, void *object);
+static void *sorcery_realtime_retrieve_id2(const struct ast_sorcery *sorcery, void *data, const char *type, const char *id, int * const errflag);
 static void *sorcery_realtime_retrieve_id(const struct ast_sorcery *sorcery, void *data, const char *type, const char *id);
+static void *sorcery_realtime_retrieve_fields2(const struct ast_sorcery *sorcery, void *data, const char *type, const struct ast_variable *fields, int * const errflag);
 static void *sorcery_realtime_retrieve_fields(const struct ast_sorcery *sorcery, void *data, const char *type, const struct ast_variable *fields);
+static void sorcery_realtime_retrieve_multiple2(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects,
+                                               const struct ast_variable *fields, int * const errflag);
 static void sorcery_realtime_retrieve_multiple(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects,
 					     const struct ast_variable *fields);
+static void sorcery_realtime_retrieve_regex2(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects, const char *regex, int * const errflag);
 static void sorcery_realtime_retrieve_regex(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects, const char *regex);
+static void sorcery_realtime_retrieve_prefix2(const struct ast_sorcery *sorcery, void *data, const char *type,
+                                             struct ao2_container *objects, const char *prefix, const size_t prefix_len, int * const errflag);
 static void sorcery_realtime_retrieve_prefix(const struct ast_sorcery *sorcery, void *data, const char *type,
 					     struct ao2_container *objects, const char *prefix, const size_t prefix_len);
 static int sorcery_realtime_update(const struct ast_sorcery *sorcery, void *data, void *object);
 static int sorcery_realtime_delete(const struct ast_sorcery *sorcery, void *data, void *object);
 static void sorcery_realtime_close(void *data);
 
+static void sorcery_realtime_update_metrics(struct sorcery_config * const config, struct ast_flags * const flags);
+static void sorcery_realtime_update_metric(struct sorcery_config * const config, int metric_index, uint64_t metric_delta);
+static void sorcery_realtime_get_metric_value_total(struct prometheus_metric *metric);
+static void sorcery_realtime_get_metric_value_error(struct prometheus_metric *metric);
+static void sorcery_realtime_get_metric_value_miss(struct prometheus_metric *metric);
+static void sorcery_realtime_get_metric_value(struct prometheus_metric *metric, int metric_index);
+static int sorcery_realtime_on_destroy(struct prometheus_metric *metric);
+
 static struct ast_sorcery_wizard realtime_object_wizard = {
 	.name = "realtime",
 	.open = sorcery_realtime_open,
 	.create = sorcery_realtime_create,
-	.retrieve_id = sorcery_realtime_retrieve_id,
+	.retrieve_id2 = sorcery_realtime_retrieve_id2,
+    .retrieve_id = sorcery_realtime_retrieve_id,
+    .retrieve_fields2 = sorcery_realtime_retrieve_fields2,
 	.retrieve_fields = sorcery_realtime_retrieve_fields,
+    .retrieve_multiple2 = sorcery_realtime_retrieve_multiple2,
 	.retrieve_multiple = sorcery_realtime_retrieve_multiple,
+    .retrieve_regex2 = sorcery_realtime_retrieve_regex2,
 	.retrieve_regex = sorcery_realtime_retrieve_regex,
+    .retrieve_prefix2 = sorcery_realtime_retrieve_prefix2,
 	.retrieve_prefix = sorcery_realtime_retrieve_prefix,
 	.update = sorcery_realtime_update,
 	.delete = sorcery_realtime_delete,
@@ -160,14 +206,23 @@ static struct ast_variable *sorcery_realtime_filter_objectset(struct ast_variabl
 	return objectset;
 }
 
-static void *sorcery_realtime_retrieve_fields(const struct ast_sorcery *sorcery, void *data, const char *type, const struct ast_variable *fields)
+static void *sorcery_realtime_retrieve_fields2(const struct ast_sorcery *sorcery, void *data, const char *type, const struct ast_variable *fields, int * const errflag)
 {
 	struct sorcery_config *config = data;
 	RAII_VAR(struct ast_variable *, objectset, NULL, ast_variables_destroy);
 	RAII_VAR(struct ast_variable *, id, NULL, ast_variables_destroy);
 	void *object = NULL;
+    int placeholder;
+    int * const error = errflag ? errflag : &placeholder;
+    struct ast_flags flags = { METRIC_REQUEST_TOTAL_FLAG };
 
-	if (!(objectset = ast_load_realtime_fields(config->family, fields))) {
+    *error = 0;
+
+	if (!(objectset = ast_load_realtime_fields2(config->family, fields, error))) {
+        /* Error occurred or object not found - update metric */
+        ast_set_flag(&flags, METRIC_REQUEST_MISS_FLAG | (*error ? METRIC_REQUEST_ERROR_FLAG : 0));
+        sorcery_realtime_update_metrics(config, &flags);
+
 		return NULL;
 	}
 
@@ -177,25 +232,62 @@ static void *sorcery_realtime_retrieve_fields(const struct ast_sorcery *sorcery,
 		|| !(object = ast_sorcery_alloc(sorcery, type, id->value))
 		|| ast_sorcery_objectset_apply(sorcery, object, objectset)) {
 		ao2_cleanup(object);
+
+        /* Required object not found, update metric */
+        ast_set_flag(&flags, METRIC_REQUEST_MISS_FLAG);
+        sorcery_realtime_update_metrics(config, &flags);
 		return NULL;
 	}
+
+    /* Object found, update metric */
+    sorcery_realtime_update_metrics(config, &flags);
 
 	return object;
 }
 
-static void *sorcery_realtime_retrieve_id(const struct ast_sorcery *sorcery, void *data, const char *type, const char *id)
+static void *sorcery_realtime_retrieve_fields(const struct ast_sorcery *sorcery, void *data, const char *type, const struct ast_variable *fields)
 {
-	RAII_VAR(struct ast_variable *, fields, ast_variable_new(UUID_FIELD, id, ""), ast_variables_destroy);
-
-	return sorcery_realtime_retrieve_fields(sorcery, data, type, fields);
+    return sorcery_realtime_retrieve_fields2(sorcery, data, type, fields, NULL);
 }
 
-static void sorcery_realtime_retrieve_multiple(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects, const struct ast_variable *fields)
+static void *sorcery_realtime_retrieve_id2(const struct ast_sorcery *sorcery, void *data, const char *type, const char *id, int * const errflag)
+{
+    struct sorcery_config *config = data;
+    struct ast_flags flags = { METRIC_REQUEST_TOTAL_FLAG };
+    int placeholder;
+    int * const error = errflag ? errflag : &placeholder;
+    RAII_VAR(struct ast_variable *, fields, ast_variable_new(UUID_FIELD, id, ""), ast_variables_destroy);
+    void *object;
+
+    *error = 0;
+
+    if (!(object = sorcery_realtime_retrieve_fields2(sorcery, data, type, fields, error))) {
+        /* Error occurred or object not found - update metric */
+        ast_set_flag(&flags, METRIC_REQUEST_MISS_FLAG | (*error ? METRIC_REQUEST_ERROR_FLAG : 0));
+    }
+
+    /* Time to update metric */
+    sorcery_realtime_update_metrics(config, &flags);
+
+    return object;
+}
+
+static void *sorcery_realtime_retrieve_id(const struct ast_sorcery *sorcery, void *data, const char *type, const char *id)
+{
+    return sorcery_realtime_retrieve_id2(sorcery, data, type, id, NULL);
+}
+
+static void sorcery_realtime_retrieve_multiple2(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects, const struct ast_variable *fields, int * const errflag)
 {
 	struct sorcery_config *config = data;
+    struct ast_flags flags = { METRIC_REQUEST_TOTAL_FLAG|METRIC_REQUEST_MISS_FLAG };
+    int placeholder;
+    int * const error = errflag ? errflag : &placeholder;
 	RAII_VAR(struct ast_config *, rows, NULL, ast_config_destroy);
 	RAII_VAR(struct ast_variable *, all, NULL, ast_variables_destroy);
 	struct ast_category *row = NULL;
+
+    *error = 0;
 
 	if (!fields) {
 		char field[strlen(UUID_FIELD) + 6], value[2];
@@ -222,7 +314,11 @@ static void sorcery_realtime_retrieve_multiple(const struct ast_sorcery *sorcery
 		fields = all;
 	}
 
-	if (!(rows = ast_load_realtime_multientry_fields(config->family, fields))) {
+	if (!(rows = ast_load_realtime_multientry_fields2(config->family, fields, error))) {
+        /* Error occurred or object not found - update metric */
+        ast_set_flag(&flags, METRIC_REQUEST_MISS_FLAG | (*error ? METRIC_REQUEST_ERROR_FLAG : 0));
+        sorcery_realtime_update_metrics(config, &flags);
+
 		return;
 	}
 
@@ -237,16 +333,33 @@ static void sorcery_realtime_retrieve_multiple(const struct ast_sorcery *sorcery
 			&& (object = ast_sorcery_alloc(sorcery, type, id->value))
 			&& !ast_sorcery_objectset_apply(sorcery, object, objectset)) {
 			ao2_link(objects, object);
+
+            /* Clear MISS flag because some object(s) found */
+            ast_clear_flag(&flags, METRIC_REQUEST_MISS_FLAG);
 		}
 
 		ast_variables_destroy(objectset);
 	}
+
+    /* Update metrics*/
+    sorcery_realtime_update_metrics(config, &flags);
 }
 
-static void sorcery_realtime_retrieve_regex(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects, const char *regex)
+static void sorcery_realtime_retrieve_multiple(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects, const struct ast_variable *fields)
 {
+    sorcery_realtime_retrieve_multiple2(sorcery, data, type, objects, fields, NULL);
+}
+
+static void sorcery_realtime_retrieve_regex2(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects, const char *regex, int * const errflag)
+{
+    struct sorcery_config *config = data;
+    struct ast_flags flags = { METRIC_REQUEST_TOTAL_FLAG };
+    int placeholder;
+    int * const error = errflag ? errflag : &placeholder;
 	char field[strlen(UUID_FIELD) + 6], value[strlen(regex) + 3];
 	RAII_VAR(struct ast_variable *, fields, NULL, ast_variables_destroy);
+
+    *error = 0;
 
 	if (!ast_strlen_zero(regex)) {
 		/* The realtime API provides no direct ability to do regex so for now we support a limited subset using pattern matching */
@@ -262,16 +375,33 @@ static void sorcery_realtime_retrieve_regex(const struct ast_sorcery *sorcery, v
 		}
 	}
 
-	sorcery_realtime_retrieve_multiple(sorcery, data, type, objects, fields);
+	sorcery_realtime_retrieve_multiple2(sorcery, data, type, objects, fields, error);
+
+    if (*error) {
+        ast_set_flag(&flags, METRIC_REQUEST_ERROR_FLAG | METRIC_REQUEST_MISS_FLAG);
+    }
+
+    sorcery_realtime_update_metrics(config, &flags);
 }
 
-static void sorcery_realtime_retrieve_prefix(const struct ast_sorcery *sorcery, void *data, const char *type,
-					     struct ao2_container *objects, const char *prefix, const size_t prefix_len)
+static void sorcery_realtime_retrieve_regex(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects, const char *regex)
 {
+    return sorcery_realtime_retrieve_regex2(sorcery, data, type, objects, regex, NULL);
+}
+
+static void sorcery_realtime_retrieve_prefix2(const struct ast_sorcery *sorcery, void *data, const char *type,
+					     struct ao2_container *objects, const char *prefix, const size_t prefix_len, int * const errflag)
+{
+    struct sorcery_config *config = data;
+    struct ast_flags flags = { METRIC_REQUEST_TOTAL_FLAG };
+    int placeholder;
+    int * const error = errflag ? errflag : &placeholder;
 	char field[strlen(UUID_FIELD) + 6], value[prefix_len + 2];
 	RAII_VAR(struct ast_variable *, fields, NULL, ast_variables_destroy);
 
-	if (prefix_len) {
+    *error = 0;
+
+    if (prefix_len) {
 		snprintf(field, sizeof(field), "%s LIKE", UUID_FIELD);
 		snprintf(value, sizeof(value), "%.*s%%", (int) prefix_len, prefix);
 		if (!(fields = ast_variable_new(field, value, ""))) {
@@ -279,7 +409,19 @@ static void sorcery_realtime_retrieve_prefix(const struct ast_sorcery *sorcery, 
 		}
 	}
 
-	sorcery_realtime_retrieve_multiple(sorcery, data, type, objects, fields);
+	sorcery_realtime_retrieve_multiple2(sorcery, data, type, objects, fields, error);
+
+    if (*error) {
+        ast_set_flag(&flags, METRIC_REQUEST_ERROR_FLAG | METRIC_REQUEST_MISS_FLAG);
+    }
+
+    sorcery_realtime_update_metrics(config, &flags);
+}
+
+static void sorcery_realtime_retrieve_prefix(const struct ast_sorcery *sorcery, void *data, const char *type,
+                                             struct ao2_container *objects, const char *prefix, const size_t prefix_len)
+{
+    return sorcery_realtime_retrieve_prefix2(sorcery, data, type, objects, prefix, prefix_len, NULL);
 }
 
 static int sorcery_realtime_update(const struct ast_sorcery *sorcery, void *data, void *object)
@@ -301,12 +443,104 @@ static int sorcery_realtime_delete(const struct ast_sorcery *sorcery, void *data
 	return (ast_destroy_realtime_fields(config->family, UUID_FIELD, ast_sorcery_object_get_id(object), NULL) <= 0) ? -1 : 0;
 }
 
+static void sorcery_realtime_update_metrics(struct sorcery_config * const config, struct ast_flags * const flags)
+{
+    if (ast_test_flag(flags, METRIC_REQUEST_TOTAL_FLAG)) {
+        sorcery_realtime_update_metric(config, METRIC_REQUEST_TOTAL_INDEX, 1);
+    }
+
+    if (ast_test_flag(flags, METRIC_REQUEST_ERROR_FLAG)) {
+        sorcery_realtime_update_metric(config, METRIC_REQUEST_ERROR_INDEX, 1);
+    }
+
+    if (ast_test_flag(flags, METRIC_REQUEST_MISS_FLAG)) {
+        sorcery_realtime_update_metric(config, METRIC_REQUEST_MISS_INDEX, 1);
+    }
+}
+
+static void sorcery_realtime_update_metric(struct sorcery_config * const config, int metric_index, uint64_t metric_delta)
+{
+    struct prometheus_metric * const metric = &config->metrics[metric_index];
+
+    ast_mutex_lock(&metric->lock);
+
+    config->metric_values[metric_index] += metric_delta;
+
+    if (NULL == metric->get_metric_value) {
+        /* Metric not registered yet*/
+        metric->on_destroy = sorcery_realtime_on_destroy;
+
+        switch (metric_index) {
+            case METRIC_REQUEST_TOTAL_INDEX:
+                metric->get_metric_value = sorcery_realtime_get_metric_value_total;
+                break;
+            case METRIC_REQUEST_ERROR_INDEX:
+                metric->get_metric_value = sorcery_realtime_get_metric_value_error;
+                break;
+            case METRIC_REQUEST_MISS_INDEX:
+                metric->get_metric_value = sorcery_realtime_get_metric_value_miss;
+                break;
+            default:
+                DO_CRASH_NORETURN;
+        }
+
+        ast_mutex_unlock(&metric->lock);
+
+        if (prometheus_metric_register(metric)) {
+            /* Metric still not registered */
+            ast_mutex_lock(&metric->lock);
+            metric->get_metric_value = NULL;
+            metric->on_destroy = NULL;
+            ast_mutex_unlock(&metric->lock);
+        }
+    } else {
+        /* Metric already registered */
+        ast_mutex_unlock(&metric->lock);
+    }
+}
+
+static void sorcery_realtime_get_metric_value_total(struct prometheus_metric *metric)
+{
+    sorcery_realtime_get_metric_value(metric, METRIC_REQUEST_TOTAL_INDEX);
+}
+
+static void sorcery_realtime_get_metric_value_error(struct prometheus_metric *metric)
+{
+    sorcery_realtime_get_metric_value(metric, METRIC_REQUEST_ERROR_INDEX);
+}
+
+static void sorcery_realtime_get_metric_value_miss(struct prometheus_metric *metric)
+{
+    sorcery_realtime_get_metric_value(metric, METRIC_REQUEST_MISS_INDEX);
+}
+
+static void sorcery_realtime_get_metric_value(struct prometheus_metric *metric, int metric_index)
+{
+    struct sorcery_config * const config = container_of(metric, struct sorcery_config, metrics[metric_index]);
+
+    snprintf(metric->value,
+             sizeof(metric->value),
+             "%" PRIu64,
+            config->metric_values[metric_index]);
+}
+
+static int sorcery_realtime_on_destroy(struct prometheus_metric *metric)
+{
+    metric->get_metric_value = NULL;
+    metric->on_destroy = NULL;
+
+    /* Don't destroy metric by res_prometheus module */
+    return -2;
+}
+
 static void *sorcery_realtime_open(const char *data)
 {
 	struct sorcery_config *config;
 	char *tmp;
 	char *family;
 	char *option;
+    char eid_str[32];
+    int i;
 
 	/* We require a prefix for family string generation, or else stuff could mix together */
 	if (ast_strlen_zero(data)) {
@@ -351,11 +585,59 @@ static void *sorcery_realtime_open(const char *data)
 		}
 	}
 
+    ast_eid_to_str(eid_str, sizeof(eid_str), &ast_eid_default);
+
+    for (i = 0;i < ARRAY_LEN(config->metrics);i++) {
+        struct prometheus_metric *metric = &config->metrics[i];
+
+        metric->allocation_strategy = PROMETHEUS_METRIC_ALLOCD;
+        ast_mutex_init(&metric->lock);
+
+        switch (i) {
+        case METRIC_REQUEST_TOTAL_INDEX:
+            metric->type = PROMETHEUS_METRIC_COUNTER;
+            ast_copy_string(metric->name, METRIC_REQUEST_TOTAL_NAME, sizeof(metric->name));
+            metric->help = METRIC_REQUEST_TOTAL_HELP;
+            break;
+        case METRIC_REQUEST_ERROR_INDEX:
+            metric->type = PROMETHEUS_METRIC_COUNTER;
+            ast_copy_string(metric->name, METRIC_REQUEST_ERROR_NAME, sizeof(metric->name));
+            metric->help = METRIC_REQUEST_ERROR_HELP;
+            break;
+        case METRIC_REQUEST_MISS_INDEX:
+            metric->type = PROMETHEUS_METRIC_COUNTER;
+            ast_copy_string(metric->name, METRIC_REQUEST_MISS_NAME, sizeof(metric->name));
+            metric->help = METRIC_REQUEST_MISS_HELP;
+            break;
+        default:
+            DO_CRASH_NORETURN;
+        }
+
+        PROMETHEUS_METRIC_SET_LABEL(metric, 0, "eid", eid_str);
+        PROMETHEUS_METRIC_SET_LABEL(metric, 1, "family", family);
+
+        /* Attempt to initialize and register metric.
+         * Note: this call can be successful only if module res_prometheus already loaded. */
+        sorcery_realtime_update_metric(config, i, 0);
+    }
+
 	return config;
 }
 
 static void sorcery_realtime_close(void *data)
 {
+    struct sorcery_config *config = data;
+    int i;
+
+    for (i = 0;i < ARRAY_LEN(config->metrics);i++) {
+        struct prometheus_metric *metric = &config->metrics[i];
+
+        if (prometheus_metric_unregister(metric)) {
+            /* May be metric not registered yet, simple destroy it */
+            prometheus_metric_free(metric);
+        }
+    }
+
 	ast_free(data);
 }
 

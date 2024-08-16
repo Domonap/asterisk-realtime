@@ -1850,12 +1850,16 @@ static int sorcery_cache_create(void *obj, void *arg, int flags)
 	return 0;
 }
 
-void *ast_sorcery_retrieve_by_id(const struct ast_sorcery *sorcery, const char *type, const char *id)
+void *ast_sorcery_retrieve_by_id2(const struct ast_sorcery *sorcery, const char *type, const char *id, int * const errflag)
 {
 	struct ast_sorcery_object_type *object_type;
 	void *object = NULL;
 	int i;
 	unsigned int cached = 0;
+
+    if (errflag) {
+        *errflag = 0;
+    }
 
 	if (ast_strlen_zero(id)) {
 		return NULL;
@@ -1871,7 +1875,19 @@ void *ast_sorcery_retrieve_by_id(const struct ast_sorcery *sorcery, const char *
 		struct ast_sorcery_object_wizard *wizard =
 			AST_VECTOR_GET(&object_type->wizards, i);
 
-		if (wizard->wizard->callbacks.retrieve_id &&
+        if (wizard->wizard->callbacks.retrieve_id2) {
+            int placeholder;
+            int * const error = errflag ? errflag : &placeholder;
+
+            if (!(object = wizard->wizard->callbacks.retrieve_id2(sorcery, wizard->data, object_type->name, id, error))) {
+                if (!*error) {
+                    /* No backend errors cause item not found by this backend */
+                    continue;
+                }
+
+                /* Backend error cause immidiatly stop entity searching at other backends because infrastructure may be unstable. Is it right solution? */
+            }
+        } else if (wizard->wizard->callbacks.retrieve_id &&
 			!(object = wizard->wizard->callbacks.retrieve_id(sorcery, wizard->data, object_type->name, id))) {
 			continue;
 		}
@@ -1894,12 +1910,21 @@ void *ast_sorcery_retrieve_by_id(const struct ast_sorcery *sorcery, const char *
 	return object;
 }
 
-void *ast_sorcery_retrieve_by_fields(const struct ast_sorcery *sorcery, const char *type, unsigned int flags, struct ast_variable *fields)
+void *ast_sorcery_retrieve_by_id(const struct ast_sorcery *sorcery, const char *type, const char *id)
+{
+    return ast_sorcery_retrieve_by_id2(sorcery, type, id, NULL);
+}
+
+void *ast_sorcery_retrieve_by_fields2(const struct ast_sorcery *sorcery, const char *type, unsigned int flags, struct ast_variable *fields, int * const errflag)
 {
 	RAII_VAR(struct ast_sorcery_object_type *, object_type, ao2_find(sorcery->types, type, OBJ_KEY), ao2_cleanup);
 	void *object = NULL;
 	int i;
 	unsigned int cached = 0;
+
+    if (errflag) {
+        *errflag = 0;
+    }
 
 	if (!object_type) {
 		return NULL;
@@ -1917,18 +1942,26 @@ void *ast_sorcery_retrieve_by_fields(const struct ast_sorcery *sorcery, const ch
 	for (i = 0; i < AST_VECTOR_SIZE(&object_type->wizards); i++) {
 		struct ast_sorcery_object_wizard *wizard =
 			AST_VECTOR_GET(&object_type->wizards, i);
+        int placeholder;
+        int * const error = errflag ? errflag : &placeholder;
+
+        *error = 0;
 
 		if ((flags & AST_RETRIEVE_FLAG_MULTIPLE)) {
-			if (wizard->wizard->callbacks.retrieve_multiple) {
+            if (wizard->wizard->callbacks.retrieve_multiple2) {
+                wizard->wizard->callbacks.retrieve_multiple2(sorcery, wizard->data, object_type->name, object, fields, error);
+            } else if (wizard->wizard->callbacks.retrieve_multiple) {
 				wizard->wizard->callbacks.retrieve_multiple(sorcery, wizard->data, object_type->name, object, fields);
 			}
 		} else if (fields && wizard->wizard->callbacks.retrieve_fields) {
-			if (wizard->wizard->callbacks.retrieve_fields) {
+            if (wizard->wizard->callbacks.retrieve_fields2) {
+                object = wizard->wizard->callbacks.retrieve_fields2(sorcery, wizard->data, object_type->name, fields, error);
+            } else if (wizard->wizard->callbacks.retrieve_fields) {
 				object = wizard->wizard->callbacks.retrieve_fields(sorcery, wizard->data, object_type->name, fields);
 			}
 		}
 
-		if (((flags & AST_RETRIEVE_FLAG_MULTIPLE) && (!ao2_container_count(object) || !wizard->caching)) || !object) {
+		if ((((flags & AST_RETRIEVE_FLAG_MULTIPLE) && (!ao2_container_count(object) || !wizard->caching)) || !object) && !*error) {
 			continue;
 		}
 
@@ -1946,11 +1979,20 @@ void *ast_sorcery_retrieve_by_fields(const struct ast_sorcery *sorcery, const ch
 	return object;
 }
 
-struct ao2_container *ast_sorcery_retrieve_by_regex(const struct ast_sorcery *sorcery, const char *type, const char *regex)
+void *ast_sorcery_retrieve_by_fields(const struct ast_sorcery *sorcery, const char *type, unsigned int flags, struct ast_variable *fields)
+{
+    return ast_sorcery_retrieve_by_fields2(sorcery, type, flags, fields, NULL);
+}
+
+struct ao2_container *ast_sorcery_retrieve_by_regex2(const struct ast_sorcery *sorcery, const char *type, const char *regex, int * const errflag)
 {
 	RAII_VAR(struct ast_sorcery_object_type *, object_type, ao2_find(sorcery->types, type, OBJ_KEY), ao2_cleanup);
 	struct ao2_container *objects;
 	int i;
+
+    if (errflag) {
+        *errflag = 0;
+    }
 
 	if (!object_type) {
 		return NULL;
@@ -1966,14 +2008,72 @@ struct ao2_container *ast_sorcery_retrieve_by_regex(const struct ast_sorcery *so
 		struct ast_sorcery_object_wizard *wizard =
 			AST_VECTOR_GET(&object_type->wizards, i);
 
-		if (!wizard->wizard->callbacks.retrieve_regex) {
-			continue;
-		}
+        if (wizard->wizard->callbacks.retrieve_regex2) {
+            int placeholder;
+            int * const error = errflag ? errflag : &placeholder;
 
-		wizard->wizard->callbacks.retrieve_regex(sorcery, wizard->data, object_type->name, objects, regex);
+            wizard->wizard->callbacks.retrieve_regex2(sorcery, wizard->data, object_type->name, objects, regex, error);
 
-		if (wizard->caching && ao2_container_count(objects)) {
-			break;
+            if (*error || (wizard->caching && ao2_container_count(objects))) {
+                break;
+            }
+        } else if (wizard->wizard->callbacks.retrieve_regex) {
+            wizard->wizard->callbacks.retrieve_regex(sorcery, wizard->data, object_type->name, objects, regex);
+
+            if (wizard->caching && ao2_container_count(objects)) {
+                break;
+            }
+        }
+	}
+	AST_VECTOR_RW_UNLOCK(&object_type->wizards);
+
+	return objects;
+}
+
+struct ao2_container *ast_sorcery_retrieve_by_regex(const struct ast_sorcery *sorcery, const char *type, const char *regex)
+{
+    return ast_sorcery_retrieve_by_regex2(sorcery, type, regex, NULL);
+}
+
+struct ao2_container *ast_sorcery_retrieve_by_prefix2(const struct ast_sorcery *sorcery, const char *type, const char *prefix, const size_t prefix_len, int * const errflag)
+{
+	RAII_VAR(struct ast_sorcery_object_type *, object_type, ao2_find(sorcery->types, type, OBJ_KEY), ao2_cleanup);
+	struct ao2_container *objects;
+	int i;
+
+    if (errflag) {
+        *errflag = 0;
+    }
+
+	if (!object_type) {
+		return NULL;
+	}
+
+	objects = ao2_container_alloc_list(AO2_ALLOC_OPT_LOCK_NOLOCK, 0, NULL, NULL);
+	if (!objects) {
+		return NULL;
+	}
+
+	AST_VECTOR_RW_RDLOCK(&object_type->wizards);
+	for (i = 0; i < AST_VECTOR_SIZE(&object_type->wizards); i++) {
+		struct ast_sorcery_object_wizard *wizard =
+			AST_VECTOR_GET(&object_type->wizards, i);
+
+        if (wizard->wizard->callbacks.retrieve_prefix2) {
+            int placeholder;
+            int * const error = errflag ? errflag : &placeholder;
+
+            wizard->wizard->callbacks.retrieve_prefix2(sorcery, wizard->data, object_type->name, objects, prefix, prefix_len, error);
+
+            if (*error || (wizard->caching && ao2_container_count(objects))) {
+                break;
+            }
+        } else if (wizard->wizard->callbacks.retrieve_prefix) {
+            wizard->wizard->callbacks.retrieve_prefix(sorcery, wizard->data, object_type->name, objects, prefix, prefix_len);
+
+            if (wizard->caching && ao2_container_count(objects)) {
+                break;
+            }
 		}
 	}
 	AST_VECTOR_RW_UNLOCK(&object_type->wizards);
@@ -1983,37 +2083,7 @@ struct ao2_container *ast_sorcery_retrieve_by_regex(const struct ast_sorcery *so
 
 struct ao2_container *ast_sorcery_retrieve_by_prefix(const struct ast_sorcery *sorcery, const char *type, const char *prefix, const size_t prefix_len)
 {
-	RAII_VAR(struct ast_sorcery_object_type *, object_type, ao2_find(sorcery->types, type, OBJ_KEY), ao2_cleanup);
-	struct ao2_container *objects;
-	int i;
-
-	if (!object_type) {
-		return NULL;
-	}
-
-	objects = ao2_container_alloc_list(AO2_ALLOC_OPT_LOCK_NOLOCK, 0, NULL, NULL);
-	if (!objects) {
-		return NULL;
-	}
-
-	AST_VECTOR_RW_RDLOCK(&object_type->wizards);
-	for (i = 0; i < AST_VECTOR_SIZE(&object_type->wizards); i++) {
-		struct ast_sorcery_object_wizard *wizard =
-			AST_VECTOR_GET(&object_type->wizards, i);
-
-		if (!wizard->wizard->callbacks.retrieve_prefix) {
-			continue;
-		}
-
-		wizard->wizard->callbacks.retrieve_prefix(sorcery, wizard->data, object_type->name, objects, prefix, prefix_len);
-
-		if (wizard->caching && ao2_container_count(objects)) {
-			break;
-		}
-	}
-	AST_VECTOR_RW_UNLOCK(&object_type->wizards);
-
-	return objects;
+    return ast_sorcery_retrieve_by_prefix2(sorcery, type, prefix, prefix_len, NULL);
 }
 
 /*! \brief Internal function which returns if the wizard has created the object */

@@ -990,18 +990,29 @@ static int stale_item_update(const void *data)
 {
 	struct stale_update_task_data *task_data = (struct stale_update_task_data *) data;
 	void *object;
+    int errflag;
 
 	start_passthru_update();
 
-	object = ast_sorcery_retrieve_by_id(task_data->sorcery,
+	object = ast_sorcery_retrieve_by_id2(task_data->sorcery,
 		ast_sorcery_object_get_type(task_data->object),
-		ast_sorcery_object_get_id(task_data->object));
-	if (!object) {
-		ast_debug(1, "Backend no longer has object type '%s' ID '%s'. Removing from cache\n",
-			ast_sorcery_object_get_type(task_data->object),
-			ast_sorcery_object_get_id(task_data->object));
-		sorcery_memory_cache_delete(task_data->sorcery, task_data->cache,
-			task_data->object);
+		ast_sorcery_object_get_id(task_data->object),
+        &errflag);
+
+    if (!object && errflag) {
+        ao2_ref(object = task_data->object, +1);
+
+        ast_debug(1, "Backend failure when attempt to fetch object type '%s' ID '%s'. Extend the lifetime of an object\n",
+                  ast_sorcery_object_get_type(object),
+                  ast_sorcery_object_get_id(object));
+    }
+
+    if (!object) {
+        ast_debug(1, "Backend no longer has object type '%s' ID '%s'. Removing from cache\n",
+                  ast_sorcery_object_get_type(task_data->object),
+                  ast_sorcery_object_get_id(task_data->object));
+        sorcery_memory_cache_delete(task_data->sorcery, task_data->cache,
+                                    task_data->object);
 	} else {
 		ast_debug(1, "Refreshing stale cache object type '%s' ID '%s'\n",
 			ast_sorcery_object_get_type(task_data->object),
