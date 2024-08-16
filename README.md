@@ -1,3 +1,99 @@
+
+
+The code was Patched to remove errors descried here
+https://habr.com/ru/companies/ozontech/articles/717856/
+
+##Config  files
+
+```
+In file asterisk.conf
+Set 
+entityid=00:11:22:33:44:55	; Entity ID.
+
+```
+
+```
+In file extconfig.conf add
+
+#include extconfig_custom.conf
+
+
+In file extconfig_custom.conf 
+
+[settings]
+ps_endpoints => curl,http://0.0.0.0:10000/${ENTITYID}/ps_endpoints
+ps_auths => curl,http://0.0.0.0:10000/${ENTITYID}/ps_auths
+ps_aors => curl,http://0.0.0.0:10000/${ENTITYID}/ps_aors
+;ps_contacts => curl,http://0.0.0.0:10000/${ENTITYID}/ps_contacts
+```
+
+```
+In file extensions_custom.conf
+
+#include freepbx_custom_fix_missing_contexts.conf
+
+[general]
+static=yes
+writeprotect=no
+clearglobalvars=no
+ ; CHECK IF WORKS
+ 
+[custom-dial]
+exten => _X.,1,NoOp(start custom dial)  
+ ; PJSIP_DIAL_TIMEOUT - kol-vo popitok, mozhno ukazat stolko skolko taimaut v dial
+ same => n,Set(PJSIP_DIAL_TIMEOUT=20)
+ same => n,While($[${DEC(PJSIP_DIAL_TIMEOUT)} > 0]) 
+ same => n,Set(FIRST_DIAL_NEW=${FIRST_DIAL})
+ same => n,Set(NEXT_DIAL=${PJSIP_DIAL_CONTACTS(${EXTEN})})
+ same => n,While($["${SET(PJ_CONTACT=${SHIFT(FIRST_DIAL_NEW,&)})}" != ""]) 
+ same => n,Set(NEXT_DIAL=${STRREPLACE(NEXT_DIAL,${PJ_CONTACT}&,)})
+ same => n,Set(NEXT_DIAL=${STRREPLACE(NEXT_DIAL,&${PJ_CONTACT},)})
+ same => n,Set(NEXT_DIAL=${STRREPLACE(NEXT_DIAL,${PJ_CONTACT},)})
+ same => n,EndWhile
+ same => n,NoOp(Remained ${PJSIP_DIAL_TIMEOUT})
+ ; Wait - skolko zhdat sekund pred sledyushey proverkoy kontakta
+ same => n,ExecIf($["${NEXT_DIAL}" != ""]?ExitWhile():Wait(1))
+ same => n,EndWhile
+ same => n,ExecIf($["${NEXT_DIAL}" != ""]?Dial(${NEXT_DIAL},60,r))
+ same => n,Hangup()
+exten => failed,1,Hangup()
+;--== end of [custom-dial] ==--;
+
+[Panels_rulematch-custom] 
+exten => _X.,1,Set(response=${CURL(http://0.0.0.0:10000/NotifyCallEvent,Panel=${CALLERID(num)}&Apartment=${EXTEN}&UniqueId=${UNIQUEID})})
+ exten => _X.,n,Set(__FIRST_DIAL=${PJSIP_DIAL_CONTACTS(${EXTEN})})
+;V sleduyushey stroke dolgno stoyat' = chtob sootvetstvovalo TZ, poka iz za togo chto server ne otvechaet stoit !=
+exten => _X.,n,ExecIf($["${response}" == "OK"]?Dial(${PJSIP_DIAL_CONTACTS(${EXTEN})}&Local/${EXTEN}@custom-dial/n)
+
+```
+
+
+```
+In file  res_curl.conf
+
+[globals]
+proxytype=http
+proxyport=8001
+conntimeout=1
+dnstimeout=1
+httptimeout=2
+followlocation=true
+;httpheader=Content-Type: application/x-www-form-urlencoded
+;failurecodes=404,408,503
+```
+
+```
+In file sorcery.conf added
+  
+[res_pjsip]
+endpoint/cache = memory_cache,expire_on_reload=yes,object_lifetime_maximum=86400,object_lifetime_stale=60
+endpoint=realtime,ps_endpoints
+auth/cache = memory_cache,expire_on_reload=yes,object_lifetime_maximum=86400,object_lifetime_stale=60
+auth=realtime,ps_auths
+aor/cache = memory_cache,expire_on_reload=yes,object_lifetime_maximum=86400,object_lifetime_stale=60
+aor=realtime,ps_aors
+```
+
 # The Asterisk(R) Open Source PBX
 ```text
         By Mark Spencer <markster@digium.com> and the Asterisk.org developer community.
@@ -5,7 +101,7 @@
 ```
 ## SECURITY
 
-  It is imperative that you read and fully understand the contents of
+It is imperative that you read and fully understand the contents of
 the security information document before you attempt to configure and run
 an Asterisk server.
 
@@ -13,17 +109,17 @@ See [Important Security Considerations] for more information.
 
 ## WHAT IS ASTERISK ?
 
-  Asterisk is an Open Source PBX and telephony toolkit.  It is, in a
+Asterisk is an Open Source PBX and telephony toolkit.  It is, in a
 sense, middleware between Internet and telephony channels on the bottom,
 and Internet and telephony applications at the top.  However, Asterisk supports
 more telephony interfaces than just Internet telephony.  Asterisk also has a
 vast amount of support for traditional PSTN telephony, as well.
 
-  For more information on the project itself, please visit the Asterisk
+For more information on the project itself, please visit the Asterisk
 [home page] and the official [wiki].  In addition you'll find lots
 of information compiled by the Asterisk community at [voip-info.org].
 
-  There is a book on Asterisk published by O'Reilly under the Creative Commons
+There is a book on Asterisk published by O'Reilly under the Creative Commons
 License. It is available in book stores as well as in a downloadable version on
 the [asteriskdocs.org] web site.
 
@@ -31,19 +127,19 @@ the [asteriskdocs.org] web site.
 
 ### Linux
 
-  The Asterisk Open Source PBX is developed and tested primarily on the
+The Asterisk Open Source PBX is developed and tested primarily on the
 GNU/Linux operating system, and is supported on every major GNU/Linux
 distribution.
 
 ### Others
 
-  Asterisk has also been 'ported' and reportedly runs properly on other
+Asterisk has also been 'ported' and reportedly runs properly on other
 operating systems as well, including Sun Solaris, Apple's Mac OS X, Cygwin,
 and the BSD variants.
 
 ## GETTING STARTED
 
-  First, be sure you've got supported hardware (but note that you don't need
+First, be sure you've got supported hardware (but note that you don't need
 ANY special hardware, not even a sound card) to install and run Asterisk.
 
 Supported telephony hardware includes:
@@ -56,49 +152,49 @@ Supported telephony hardware includes:
 
 ### UPGRADING FROM AN EARLIER VERSION
 
-  If you are updating from a previous version of Asterisk, make sure you
+If you are updating from a previous version of Asterisk, make sure you
 read the [UPGRADE.txt] file in the source directory. There are some files
 and configuration options that you will have to change, even though we
 made every effort possible to maintain backwards compatibility.
 
-  In order to discover new features to use, please check the configuration
+In order to discover new features to use, please check the configuration
 examples in the [configs] directory of the source code distribution.  For a
 list of new features in this version of Asterisk, see the [CHANGES] file.
 
 ### NEW INSTALLATIONS
 
-  Ensure that your system contains a compatible compiler and development
+Ensure that your system contains a compatible compiler and development
 libraries.  Asterisk requires either the GNU Compiler Collection (GCC) version
 4.1 or higher, or a compiler that supports the C99 specification and some of
 the gcc language extensions.  In addition, your system needs to have the C
 library headers available, and the headers and libraries for ncurses.
 
-  There are many modules that have additional dependencies.  To see what
+There are many modules that have additional dependencies.  To see what
 libraries are being looked for, see `./configure --help`, or run
 `make menuselect` to view the dependencies for specific modules.
 
-  On many distributions, these dependencies are installed by packages with names
+On many distributions, these dependencies are installed by packages with names
 like 'glibc-devel', 'ncurses-devel', 'openssl-devel' and 'zlib-devel'
 or similar.
 
 So, let's proceed:
 1. Read this file.
 
-  There are more documents than this one in the [doc] directory.  You may also
+There are more documents than this one in the [doc] directory.  You may also
 want to check the configuration files that contain examples and reference
 guides in the [configs] directory.
 
 2. Run `./configure`
 
-  Execute the configure script to guess values for system-dependent
-variables used during compilation. If the script indicates that some required 
+Execute the configure script to guess values for system-dependent
+variables used during compilation. If the script indicates that some required
 components are missing, you can run `./contrib/scripts/install_prereq install`
 to install the necessary components. Note that this will install all dependencies for every functionality of Asterisk. After running the script, you will need
 to rerun `./configure`.
 
 3. Run `make menuselect` _\[optional]_
 
-  This is needed if you want to select the modules that will be compiled and to
+This is needed if you want to select the modules that will be compiled and to
 check dependencies for various optional modules.
 
 4. Run `make`
@@ -107,25 +203,25 @@ Assuming the build completes successfully:
 
 5. Run `make install`
 
-  If this is your first time working with Asterisk, you may wish to install
+If this is your first time working with Asterisk, you may wish to install
 the sample PBX, with demonstration extensions, etc.  If so, run:
 
 6. Run `make samples`
 
-  Doing so will overwrite any existing configuration files you have installed.
+Doing so will overwrite any existing configuration files you have installed.
 
 7. Finally, you can launch Asterisk in the foreground mode (not a daemon) with:
 ```
         # asterisk -vvvc
 ```
-  You'll see a bunch of verbose messages fly by your screen as Asterisk
+You'll see a bunch of verbose messages fly by your screen as Asterisk
 initializes (that's the "very very verbose" mode).  When it's ready, if
 you specified the "c" then you'll get a command line console, that looks
 like this:
 ```
         *CLI>
 ```
-  You can type "core show help" at any time to get help with the system.  For help
+You can type "core show help" at any time to get help with the system.  For help
 with a specific command, type "core show help <command>".  To start the PBX using
 your sound card, you can type "console dial" to dial the PBX.  Then you can use
 "console answer", "console hangup", and "console dial" to simulate the actions
@@ -133,16 +229,16 @@ of a telephone.  Remember that if you don't have a full duplex sound card
 (and Asterisk will tell you somewhere in its verbose messages if you do/don't)
 then it won't work right (not yet).
 
-  "man asterisk" at the Unix/Linux command prompt will give you detailed
+"man asterisk" at the Unix/Linux command prompt will give you detailed
 information on how to start and stop Asterisk, as well as all the command
 line options for starting Asterisk.
 
-  Feel free to look over the configuration files in `/etc/asterisk`, where you
+Feel free to look over the configuration files in `/etc/asterisk`, where you
 will find a lot of information about what you can do with Asterisk.
 
 ### ABOUT CONFIGURATION FILES
 
-  All Asterisk configuration files share a common format.  Comments are
+All Asterisk configuration files share a common format.  Comments are
 delimited by ';' (since '#' of course, being a DTMF digit, may occur in
 many places).  A configuration file is divided into sections whose names
 appear in []'s.  Each section typically contains two types of statements,
@@ -151,12 +247,12 @@ parameters'.  Internally the use of '=' and '=>' is exactly the same, so
 they're used only to help make the configuration file easier to
 understand, and do not affect how it is actually parsed.
 
-  Entries of the form 'variable=value' set the value of some parameter in
+Entries of the form 'variable=value' set the value of some parameter in
 asterisk.  For example, in [chan_dahdi.conf], one might specify:
 ```
 	switchtype=national
 ```
-  In order to indicate to Asterisk that the switch they are connecting to is
+In order to indicate to Asterisk that the switch they are connecting to is
 of the type "national".  In general, the parameter will apply to
 instantiations which occur below its specification.  For example, if the
 configuration file read:
@@ -168,18 +264,18 @@ configuration file read:
 	channel => 25-47
 ```
 
-  The "national" switchtype would be applied to channels one through
+The "national" switchtype would be applied to channels one through
 four and channels 10 through 12, whereas the "dms100" switchtype would
 apply to channels 25 through 47.
 
-  The "object => parameters" instantiates an object with the given
+The "object => parameters" instantiates an object with the given
 parameters.  For example, the line "channel => 25-47" creates objects for
 the channels 25 through 47 of the card, obtaining the settings
 from the variables specified above.
 
 ### SPECIAL NOTE ON TIME
 
-  Those using SIP phones should be aware that Asterisk is sensitive to
+Those using SIP phones should be aware that Asterisk is sensitive to
 large jumps in time.  Manually changing the system time using date(1)
 (or other similar commands) may cause SIP registrations and other
 internal processes to fail.  If your system cannot keep accurate time
@@ -192,18 +288,18 @@ versions of NTP.  Beware of some time synchronization methods that get
 the correct real time periodically and then manually set the system
 clock.
 
-  Apparent time changes due to daylight savings time are just that,
+Apparent time changes due to daylight savings time are just that,
 apparent.  The use of daylight savings time in a Linux system is
 purely a user interface issue and does not affect the operation of the
 Linux kernel or Asterisk.  The system clock on Linux kernels operates
 on UTC.  UTC does not use daylight savings time.
 
-  Also note that this issue is separate from the clocking of TDM
+Also note that this issue is separate from the clocking of TDM
 channels, and is known to at least affect SIP registrations.
 
 ### FILE DESCRIPTORS
 
-  Depending on the size of your system and your configuration,
+Depending on the size of your system and your configuration,
 Asterisk can consume a large number of file descriptors.  In UNIX,
 file descriptors are used for more than just files on disk.  File
 descriptors are also used for handling network communication
@@ -211,7 +307,7 @@ descriptors are also used for handling network communication
 digital trunk hardware).  Asterisk accesses many on-disk files for
 everything from configuration information to voicemail storage.
 
-  Most systems limit the number of file descriptors that Asterisk can
+Most systems limit the number of file descriptors that Asterisk can
 have open at one time.  This can limit the number of simultaneous
 calls that your system can handle.  For example, if the limit is set
 at 1024 (a common default value) Asterisk can handle approximately 150
@@ -220,7 +316,7 @@ follow the instructions for your system below:
 
 #### PAM-BASED LINUX SYSTEM
 
-  If your system uses PAM (Pluggable Authentication Modules) edit
+If your system uses PAM (Pluggable Authentication Modules) edit
 `/etc/security/limits.conf`.  Add these lines to the bottom of the file:
 ```text
 root            soft    nofile          4096
@@ -234,17 +330,17 @@ these changes to take effect.
 
 #### GENERIC UNIX SYSTEM
 
-  If there are no instructions specifically adapted to your system
+If there are no instructions specifically adapted to your system
 above you can try adding the command `ulimit -n 8192` to the script
 that starts Asterisk.
 
 ## MORE INFORMATION
 
-  See the [doc] directory for more documentation on various features.
+See the [doc] directory for more documentation on various features.
 Again, please read all the configuration samples that include documentation
 on the configuration options.
 
-  Finally, you may wish to visit the [support] site and join the [mailing
+Finally, you may wish to visit the [support] site and join the [mailing
 list] if you're interested in getting more information.
 
 Welcome to the growing worldwide community of Asterisk users!
