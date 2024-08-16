@@ -1,3 +1,99 @@
+
+
+The code was Patched to remove errors descried here
+https://habr.com/ru/companies/ozontech/articles/717856/
+
+##Config  files
+ 
+```
+In file asterisk.conf
+Set 
+entityid=00:11:22:33:44:55	; Entity ID.
+
+```
+
+```
+In file extconfig.conf add
+
+#include extconfig_custom.conf
+
+
+In file extconfig_custom.conf 
+
+[settings]
+ps_endpoints => curl,http://0.0.0.0:10000/${ENTITYID}/ps_endpoints
+ps_auths => curl,http://0.0.0.0:10000/${ENTITYID}/ps_auths
+ps_aors => curl,http://0.0.0.0:10000/${ENTITYID}/ps_aors
+;ps_contacts => curl,http://0.0.0.0:10000/${ENTITYID}/ps_contacts
+```
+
+```
+In file extensions_custom.conf
+
+#include freepbx_custom_fix_missing_contexts.conf
+
+[general]
+static=yes
+writeprotect=no
+clearglobalvars=no
+ ; CHECK IF WORKS
+ 
+[custom-dial]
+exten => _X.,1,NoOp(start custom dial)  
+ ; PJSIP_DIAL_TIMEOUT - kol-vo popitok, mozhno ukazat stolko skolko taimaut v dial
+ same => n,Set(PJSIP_DIAL_TIMEOUT=20)
+ same => n,While($[${DEC(PJSIP_DIAL_TIMEOUT)} > 0]) 
+ same => n,Set(FIRST_DIAL_NEW=${FIRST_DIAL})
+ same => n,Set(NEXT_DIAL=${PJSIP_DIAL_CONTACTS(${EXTEN})})
+ same => n,While($["${SET(PJ_CONTACT=${SHIFT(FIRST_DIAL_NEW,&)})}" != ""]) 
+ same => n,Set(NEXT_DIAL=${STRREPLACE(NEXT_DIAL,${PJ_CONTACT}&,)})
+ same => n,Set(NEXT_DIAL=${STRREPLACE(NEXT_DIAL,&${PJ_CONTACT},)})
+ same => n,Set(NEXT_DIAL=${STRREPLACE(NEXT_DIAL,${PJ_CONTACT},)})
+ same => n,EndWhile
+ same => n,NoOp(Remained ${PJSIP_DIAL_TIMEOUT})
+ ; Wait - skolko zhdat sekund pred sledyushey proverkoy kontakta
+ same => n,ExecIf($["${NEXT_DIAL}" != ""]?ExitWhile():Wait(1))
+ same => n,EndWhile
+ same => n,ExecIf($["${NEXT_DIAL}" != ""]?Dial(${NEXT_DIAL},60,r))
+ same => n,Hangup()
+exten => failed,1,Hangup()
+;--== end of [custom-dial] ==--;
+
+[Panels_rulematch-custom] 
+exten => _X.,1,Set(response=${CURL(http://0.0.0.0:10000/NotifyCallEvent,Panel=${CALLERID(num)}&Apartment=${EXTEN}&UniqueId=${UNIQUEID})})
+ exten => _X.,n,Set(__FIRST_DIAL=${PJSIP_DIAL_CONTACTS(${EXTEN})})
+;V sleduyushey stroke dolgno stoyat' = chtob sootvetstvovalo TZ, poka iz za togo chto server ne otvechaet stoit !=
+exten => _X.,n,ExecIf($["${response}" == "OK"]?Dial(${PJSIP_DIAL_CONTACTS(${EXTEN})}&Local/${EXTEN}@custom-dial/n)
+
+```
+
+
+```
+In file  res_curl.conf
+
+[globals]
+proxytype=http
+proxyport=8001
+conntimeout=1
+dnstimeout=1
+httptimeout=2
+followlocation=true
+;httpheader=Content-Type: application/x-www-form-urlencoded
+;failurecodes=404,408,503
+```
+
+```
+In file sorcery.conf added
+  
+[res_pjsip]
+endpoint/cache = memory_cache,expire_on_reload=yes,object_lifetime_maximum=86400,object_lifetime_stale=60
+endpoint=realtime,ps_endpoints
+auth/cache = memory_cache,expire_on_reload=yes,object_lifetime_maximum=86400,object_lifetime_stale=60
+auth=realtime,ps_auths
+aor/cache = memory_cache,expire_on_reload=yes,object_lifetime_maximum=86400,object_lifetime_stale=60
+aor=realtime,ps_aors
+```
+
 # The Asterisk(R) Open Source PBX
 ```text
         By Mark Spencer <markster@digium.com> and the Asterisk.org developer community.

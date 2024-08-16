@@ -1,3 +1,8 @@
+
+
+#include extconfig_custom.conf
+
+
 ;
 ; Static and realtime external configuration
 ; engine configuration

@@ -38,3 +38,17 @@ out/
 *.orig
 tests/CI/output
 .develvars
+# Default ignored files
+/shelf/
+/workspace.xml
+# Rider ignored files
+/.idea.asterisk-realtime.iml
+/contentModel.xml
+/projectSettingsUpdater.xml
+/modules.xml
+# Editor-based HTTP Client requests
+/httpRequests/
+# Datasource local storage ignored files
+/dataSources/
+/dataSources.local.xml
+/.idea/*

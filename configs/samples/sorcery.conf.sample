@@ -1,7 +1,16 @@
-; Sample configuration file for Sorcery Data Access Layer
 
-;
-; Wizards
+[res_pjsip]
+endpoint/cache = memory_cache,expire_on_reload=yes,object_lifetime_maximum=86400,object_lifetime_stale=60
+endpoint=realtime,ps_endpoints
+auth/cache = memory_cache,expire_on_reload=yes,object_lifetime_maximum=86400,object_lifetime_stale=60
+auth=realtime,ps_auths
+aor/cache = memory_cache,expire_on_reload=yes,object_lifetime_maximum=86400,object_lifetime_stale=60
+aor=realtime,ps_aors
+
+
+
+
+ 
 ;
 ; Wizards are the persistence mechanism for objects. They are loaded as Asterisk modules and register
 ; themselves with the sorcery core. All implementation specific details of how objects are persisted is isolated
